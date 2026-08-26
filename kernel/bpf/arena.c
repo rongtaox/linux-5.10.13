@@ -551,6 +551,7 @@ static void arena_free_pages(struct bpf_arena *arena, long uaddr, long page_cnt)
 	}
 }
 
+
 __bpf_kfunc_start_defs();
 
 __bpf_kfunc void *bpf_arena_alloc_pages(void *p__map, void *addr__ign, u32 page_cnt,
@@ -562,7 +563,31 @@ __bpf_kfunc void *bpf_arena_alloc_pages(void *p__map, void *addr__ign, u32 page_
 	if (map->map_type != BPF_MAP_TYPE_ARENA || flags || !page_cnt)
 		return NULL;
 
-	return (void *)arena_alloc_pages(arena, (long)addr__ign, page_cnt, node_id);
+	return (void *)arena_alloc_pages(arena, (long)addr__ign, page_cnt, node_id, true);
+}
+
+void *bpf_arena_alloc_pages_non_sleepable(void *p__map, void *addr__ign, u32 page_cnt,
+					  int node_id, u64 flags)
+{
+	struct bpf_map *map = p__map;
+	struct bpf_arena *arena = container_of(map, struct bpf_arena, map);
+
+	if (map->map_type != BPF_MAP_TYPE_ARENA || flags || !page_cnt)
+		return NULL;
+
+	return (void *)arena_alloc_pages(arena, (long)addr__ign, page_cnt, node_id, false);
+}
+
+void *bpf_arena_alloc_pages_sleepable(void *p__map, void *addr__ign, u32 page_cnt,
+				      int node_id, u64 flags)
+{
+	struct bpf_map *map = p__map;
+	struct bpf_arena *arena = container_of(map, struct bpf_arena, map);
+
+	if (map->map_type != BPF_MAP_TYPE_ARENA || flags || !page_cnt)
+		return NULL;
+
+	return (void *)arena_alloc_pages(arena, (long)addr__ign, page_cnt, node_id, true);
 }
 
 __bpf_kfunc void bpf_arena_free_pages(void *p__map, void *ptr__ign, u32 page_cnt)
@@ -572,13 +597,38 @@ __bpf_kfunc void bpf_arena_free_pages(void *p__map, void *ptr__ign, u32 page_cnt
 
 	if (map->map_type != BPF_MAP_TYPE_ARENA || !page_cnt || !ptr__ign)
 		return;
-	arena_free_pages(arena, (long)ptr__ign, page_cnt);
+	arena_free_pages(arena, (long)ptr__ign, page_cnt, true);
+}
+
+void bpf_arena_free_pages_non_sleepable(void *p__map, void *ptr__ign, u32 page_cnt)
+{
+	struct bpf_map *map = p__map;
+	struct bpf_arena *arena = container_of(map, struct bpf_arena, map);
+
+	if (map->map_type != BPF_MAP_TYPE_ARENA || !page_cnt || !ptr__ign)
+		return;
+	arena_free_pages(arena, (long)ptr__ign, page_cnt, false);
+}
+
+__bpf_kfunc int bpf_arena_reserve_pages(void *p__map, void *ptr__ign, u32 page_cnt)
+{
+	struct bpf_map *map = p__map;
+	struct bpf_arena *arena = container_of(map, struct bpf_arena, map);
+
+	if (map->map_type != BPF_MAP_TYPE_ARENA)
+		return -EINVAL;
+
+	if (!page_cnt)
+		return 0;
+
+	return arena_reserve_pages(arena, (long)ptr__ign, page_cnt);
 }
 __bpf_kfunc_end_defs();
 
 BTF_KFUNCS_START(arena_kfuncs)
-BTF_ID_FLAGS(func, bpf_arena_alloc_pages, KF_TRUSTED_ARGS | KF_SLEEPABLE | KF_ARENA_RET | KF_ARENA_ARG2)
-BTF_ID_FLAGS(func, bpf_arena_free_pages, KF_TRUSTED_ARGS | KF_SLEEPABLE | KF_ARENA_ARG2)
+BTF_ID_FLAGS(func, bpf_arena_alloc_pages, KF_ARENA_RET | KF_ARENA_ARG2 | KF_SPINLOCK_SAFE)
+BTF_ID_FLAGS(func, bpf_arena_free_pages, KF_ARENA_ARG2 | KF_SPINLOCK_SAFE)
+BTF_ID_FLAGS(func, bpf_arena_reserve_pages, KF_ARENA_ARG2 | KF_SPINLOCK_SAFE)
 BTF_KFUNCS_END(arena_kfuncs)
 
 static const struct btf_kfunc_id_set common_kfunc_set = {
@@ -591,3 +641,72 @@ static int __init kfunc_init(void)
 	return register_btf_kfunc_id_set(BPF_PROG_TYPE_UNSPEC, &common_kfunc_set);
 }
 late_initcall(kfunc_init);
+
+static void __bpf_prog_report_arena_violation(struct bpf_prog *prog, bool write,
+					      unsigned long addr, unsigned long fault_ip)
+{
+	struct bpf_stream_stage ss;
+	u64 user_vm_start;
+
+	/* Use main prog for stream access */
+	prog = prog->aux->main_prog_aux->prog;
+
+	user_vm_start = bpf_arena_get_user_vm_start(prog->aux->arena);
+	addr += clear_lo32(user_vm_start);
+
+	bpf_stream_stage(ss, prog, BPF_STDERR, ({
+		bpf_stream_printk(ss, "ERROR: Arena %s access at unmapped address 0x%lx\n",
+				  write ? "WRITE" : "READ", addr);
+		bpf_stream_dump_stack(ss);
+	}));
+}
+
+bool bpf_arena_handle_page_fault(unsigned long addr, bool is_write, unsigned long fault_ip)
+{
+	struct bpf_arena *arena;
+	struct bpf_prog *prog;
+	unsigned long kbase;
+	unsigned long page_addr = addr & PAGE_MASK;
+
+	prog = bpf_prog_find_from_stack();
+	if (!prog)
+		return false;
+
+	arena = prog->aux->arena;
+	/* a prog not using arena may be on stack, so arena can be NULL */
+	if (!arena)
+		return false;
+
+	kbase = bpf_arena_get_kern_vm_start(arena);
+
+	/*
+	 * Recovery covers the 4 GiB mappable band plus the upper half-guard.
+	 * Lower guard is unreachable from kfuncs; an address there indicates
+	 * a different bug class - leave it to the regular kernel oops path.
+	 */
+	if (page_addr < kbase || page_addr >= kbase + SZ_4G + GUARD_SZ / 2)
+		return false;
+
+	apply_to_page_range(&init_mm, page_addr, PAGE_SIZE,
+			    apply_range_set_scratch_cb, arena->scratch_page);
+	flush_vmap_cache(page_addr, PAGE_SIZE);
+	__bpf_prog_report_arena_violation(prog, is_write, page_addr - kbase, fault_ip);
+	return true;
+}
+
+void bpf_prog_report_arena_violation(bool write, unsigned long addr, unsigned long fault_ip)
+{
+	struct bpf_prog *prog;
+
+	/*
+	 * The RCU read lock is held to safely traverse the latch tree, but we
+	 * don't need its protection when accessing the prog, since it will not
+	 * disappear while we are handling the fault.
+	 */
+	rcu_read_lock();
+	prog = bpf_prog_ksym_find(fault_ip);
+	rcu_read_unlock();
+	if (!prog)
+		return;
+	__bpf_prog_report_arena_violation(prog, write, addr, fault_ip);
+}

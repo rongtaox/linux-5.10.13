@@ -64,6 +64,84 @@ static inline void __chk_io_ptr(const volatile void __iomem *ptr) { }
 /* Attributes */
 #include <linux/compiler_attributes.h>
 
+#if CONFIG_FUNCTION_ALIGNMENT > 0
+#define __function_aligned              __aligned(CONFIG_FUNCTION_ALIGNMENT)
+#else
+#define __function_aligned
+#endif
+
+/*
+ *   gcc: https://gcc.gnu.org/onlinedocs/gcc/Common-Function-Attributes.html#index-cold-function-attribute
+ *   gcc: https://gcc.gnu.org/onlinedocs/gcc/Label-Attributes.html#index-cold-label-attribute
+ *
+ * When -falign-functions=N is in use, we must avoid the cold attribute as
+ * GCC drops the alignment for cold functions. Worse, GCC can implicitly mark
+ * callees of cold functions as cold themselves, so it's not sufficient to add
+ * __function_aligned here as that will not ensure that callees are correctly
+ * aligned.
+ *
+ * See:
+ *
+ *   https://lore.kernel.org/lkml/Y77%2FqVgvaJidFpYt@FVFF77S0Q05N
+ *   https://gcc.gnu.org/bugzilla/show_bug.cgi?id=88345#c9
+ */
+#if defined(CONFIG_CC_HAS_SANE_FUNCTION_ALIGNMENT) || (CONFIG_FUNCTION_ALIGNMENT == 0)
+#define __cold                          __attribute__((__cold__))
+#else
+#define __cold
+#endif
+
+/*
+ * On x86-64 and arm64 targets, __preserve_most changes the calling convention
+ * of a function to make the code in the caller as unintrusive as possible. This
+ * convention behaves identically to the C calling convention on how arguments
+ * and return values are passed, but uses a different set of caller- and callee-
+ * saved registers.
+ *
+ * The purpose is to alleviates the burden of saving and recovering a large
+ * register set before and after the call in the caller.  This is beneficial for
+ * rarely taken slow paths, such as error-reporting functions that may be called
+ * from hot paths.
+ *
+ * Note: This may conflict with instrumentation inserted on function entry which
+ * does not use __preserve_most or equivalent convention (if in assembly). Since
+ * function tracing assumes the normal C calling convention, where the attribute
+ * is supported, __preserve_most implies notrace.  It is recommended to restrict
+ * use of the attribute to functions that should or already disable tracing.
+ *
+ * Optional: not supported by gcc.
+ *
+ * clang: https://clang.llvm.org/docs/AttributeReference.html#preserve-most
+ */
+#if __has_attribute(__preserve_most__) && (defined(CONFIG_X86_64) || defined(CONFIG_ARM64))
+# define __preserve_most notrace __attribute__((__preserve_most__))
+#else
+# define __preserve_most
+#endif
+
+/*
+ * Annotating a function/variable with __retain tells the compiler to place
+ * the object in its own section and set the flag SHF_GNU_RETAIN. This flag
+ * instructs the linker to retain the object during garbage-cleanup or LTO
+ * phases.
+ *
+ * Note that the __used macro is also used to prevent functions or data
+ * being optimized out, but operates at the compiler/IR-level and may still
+ * allow unintended removal of objects during linking.
+ *
+ * Optional: only supported since gcc >= 11, clang >= 13
+ *
+ *   gcc: https://gcc.gnu.org/onlinedocs/gcc/Common-Function-Attributes.html#index-retain-function-attribute
+ * clang: https://clang.llvm.org/docs/AttributeReference.html#retain
+ */
+#if __has_attribute(__retain__) && \
+        (defined(CONFIG_LD_DEAD_CODE_DATA_ELIMINATION) || \
+         defined(CONFIG_LTO_CLANG))
+# define __retain                       __attribute__((__retain__))
+#else
+# define __retain
+#endif
+
 /* Compiler specific macros. */
 #ifdef __clang__
 #include <linux/compiler-clang.h>
@@ -319,13 +397,13 @@ struct ftrace_likely_data {
 		"Need native word sized stores/loads for atomicity.")
 
 /* Helpers for emitting diagnostics in pragmas. */
-//#ifndef __diag
-//#define __diag(string)
-//#endif
+#ifndef __diag
+#define __diag(string)
+#endif
 
-//#ifndef __diag_GCC
-//#define __diag_GCC(version, severity, string)
-//#endif
+#ifndef __diag_GCC
+#define __diag_GCC(version, severity, string)
+#endif
 
 #define __diag_push()	__diag(push)
 #define __diag_pop()	__diag(pop)

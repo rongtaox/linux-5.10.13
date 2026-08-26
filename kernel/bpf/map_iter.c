@@ -193,3 +193,38 @@ static int __init bpf_map_iter_init(void)
 }
 
 late_initcall(bpf_map_iter_init);
+
+__bpf_kfunc_start_defs();
+
+__bpf_kfunc s64 bpf_map_sum_elem_count(const struct bpf_map *map)
+{
+	s64 *pcount;
+	s64 ret = 0;
+	int cpu;
+
+	if (!map || !map->elem_count)
+		return 0;
+
+	for_each_possible_cpu(cpu) {
+		pcount = per_cpu_ptr(map->elem_count, cpu);
+		ret += READ_ONCE(*pcount);
+	}
+	return ret;
+}
+
+__bpf_kfunc_end_defs();
+
+BTF_KFUNCS_START(bpf_map_iter_kfunc_ids)
+BTF_ID_FLAGS(func, bpf_map_sum_elem_count)
+BTF_KFUNCS_END(bpf_map_iter_kfunc_ids)
+
+static const struct btf_kfunc_id_set bpf_map_iter_kfunc_set = {
+	.owner = THIS_MODULE,
+	.set   = &bpf_map_iter_kfunc_ids,
+};
+
+static int init_subsystem(void)
+{
+	return register_btf_kfunc_id_set(BPF_PROG_TYPE_UNSPEC, &bpf_map_iter_kfunc_set);
+}
+late_initcall(init_subsystem);
