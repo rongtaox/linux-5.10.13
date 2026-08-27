@@ -1,6 +1,15 @@
 
+
+# linux 5.10.13
+
+## bpf_prog_load()
+
 ```c
 bpf_prog_load() {
+  license_is_gpl_compatible();
+  /* 指令数超限 */
+  if (attr->insn_cnt == 0 || attr->insn_cnt > BPF_COMPLEXITY_LIMIT_INSNS)
+    return -E2BIG;
   /* 新分配 */
   prog = bpf_prog_alloc(bpf_prog_size(attr->insn_cnt), GFP_USER);
   bpf_check(); /* Verifier in here */
@@ -8,7 +17,7 @@ bpf_prog_load() {
 }
 ```
 
-# linux 5.10.13
+## bpf_check()
 
 ```c
 bpf_check() {
@@ -71,7 +80,12 @@ do_check(env) {
       u8 opcode = BPF_OP(insn->code);
       if (opcode == BPF_CALL) {
         if (insn->src_reg == BPF_PSEUDO_CALL)
-          err = check_func_call(env, insn, &env->insn_idx);
+          err = check_func_call(env, insn, &env->insn_idx) {
+            /* 调用栈太深 */
+            if (state->curframe + 1 >= MAX_CALL_FRAMES) {
+              return -E2BIG;
+            }
+          }
         else
           err = check_helper_call(env, insn->imm, env->insn_idx);
       } else if (opcode == BPF_JA) {
@@ -90,6 +104,16 @@ do_check(env) {
     }
 
     env->insn_idx++;
+  }
+}
+```
+
+## do_check_main()
+
+```c
+do_check_main() {
+  do_check_common() {
+    do_check();
   }
 }
 ```

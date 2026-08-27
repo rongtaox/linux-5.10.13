@@ -74,6 +74,10 @@ static const struct bpf_verifier_ops * const bpf_verifier_ops[] = {
 	[BPF_PROG_TYPE_EXT] = & bpf_extension_verifier_ops,
 
 	[BPF_PROG_TYPE_LSM] = & lsm_verifier_ops,
+
+	/**
+	 * 更多
+	 */
 #undef BPF_PROG_TYPE
 #undef BPF_MAP_TYPE
 #undef BPF_LINK_TYPE
@@ -381,7 +385,7 @@ static void bpf_vlog_reset(struct bpf_verifier_log *log, u32 new_pos)
 }
 EXPORT_SYMBOL_GPL(bpf_verifier_log_write);
 
- static void verbose(void *private_data, const char *fmt, ...)
+static void verbose(void *private_data, const char *fmt, ...)
 {
 	struct bpf_verifier_env *env = private_data;
 	va_list args;
@@ -394,8 +398,7 @@ EXPORT_SYMBOL_GPL(bpf_verifier_log_write);
 	va_end(args);
 }
 
- void bpf_log(struct bpf_verifier_log *log,
-			    const char *fmt, ...)
+void bpf_log(struct bpf_verifier_log *log, const char *fmt, ...)
 {
 	va_list args;
 
@@ -415,9 +418,8 @@ static const char *ltrim(const char *s)
 	return s;
 }
 
- static void verbose_linfo(struct bpf_verifier_env *env,
-					 u32 insn_off,
-					 const char *prefix_fmt, ...)
+static void verbose_linfo(struct bpf_verifier_env *env, u32 insn_off,
+			  const char *prefix_fmt, ...)
 {
 	const struct bpf_line_info *linfo;
 
@@ -4964,12 +4966,7 @@ static void clear_caller_saved_regs(struct bpf_verifier_env *env,
 }
 
 /**
- * @brief 检测函数调用
- *
- * @param env
- * @param insn
- * @param insn_idx
- * @return int
+ * 检测函数调用
  */
 static int check_func_call(struct bpf_verifier_env *env, struct bpf_insn *insn,
 			   int *insn_idx)
@@ -4980,7 +4977,7 @@ static int check_func_call(struct bpf_verifier_env *env, struct bpf_insn *insn,
 	int i, err, subprog, target_insn;
 	bool is_global = false;
 
-	if (state->curframe + 1 >= MAX_CALL_FRAMES) {
+	if (state->curframe + 1 >= MAX_CALL_FRAMES/*=8*/) {
 		verbose(env, "the call stack of %d frames is too deep\n",
 			state->curframe + 2);
 		return -E2BIG;
@@ -5028,6 +5025,9 @@ static int check_func_call(struct bpf_verifier_env *env, struct bpf_insn *insn,
 		}
 	}
 
+	/**
+	 * 被调用
+	 */
 	callee = kzalloc(sizeof(*callee), GFP_KERNEL);
 	if (!callee)
 		return -ENOMEM;
@@ -12225,7 +12225,6 @@ int bpf_check(struct bpf_prog **prog, union bpf_attr *attr,
 	u64 start_time = ktime_get_ns();
 	/**
 	 *
-	 *
 	 */
 	struct bpf_verifier_env *env;
 	struct bpf_verifier_log *log;
@@ -12428,7 +12427,8 @@ skip_full_check:
 		ret = fixup_bpf_calls(env);
 #endif
 
-	/* do 32-bit optimization after insn patching has done so those patched
+	/**
+	 * do 32-bit optimization after insn patching has done so those patched
 	 * insns could be handled correctly.
 	 */
 	if (ret == 0 && !bpf_prog_is_dev_bound(env->prog->aux)) {

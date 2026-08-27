@@ -2677,6 +2677,9 @@ static int bpf_prog_load(union bpf_attr *attr, union bpf_attr __user *uattr)
 	 */
 	is_gpl = license_is_gpl_compatible(license);
 
+	/**
+	 * 检查指令数是否超出限制
+	 */
 	if (attr->insn_cnt == 0 ||
 	    attr->insn_cnt > (bpf_capable() ? BPF_COMPLEXITY_LIMIT_INSNS/*1000000=1M*/ : BPF_MAXINSNS))
 		return -E2BIG;
@@ -2732,7 +2735,7 @@ static int bpf_prog_load(union bpf_attr *attr, union bpf_attr __user *uattr)
 	prog->aux->sleepable = attr->prog_flags & BPF_F_SLEEPABLE;
 
 	/**
-	 *  初始化 BPF 程序中的安全字段
+	 * 初始化 BPF 程序中的安全字段
 	 */
 	err = security_bpf_prog_alloc(prog->aux);
 	if (err)
