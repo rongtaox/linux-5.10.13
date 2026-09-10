@@ -366,31 +366,31 @@ struct pci_dev {
 
 	unsigned int	devfn;		/* Encoded device & function index */
 
-    /**
-     *  用于标识硬件制造厂商，
-     *  如 `PCI_VENDOR_ID_LOONGSON`
-     *     `PCI_VENDOR_ID_INTEL` = 0x8086
-     */
+	/**
+	 *  用于标识硬件制造厂商，
+	 *  如 `PCI_VENDOR_ID_LOONGSON`
+	 *     `PCI_VENDOR_ID_INTEL` = 0x8086
+	 */
 	unsigned short	vendor;
-    /**
-     *  通常与 venderID 组成 32bit 设备标识符
-     *  设备驱动程序通常依靠于该 "设备标识符" 识别设备
-     */
+	/**
+	 *  通常与 venderID 组成 32bit 设备标识符
+	 *  设备驱动程序通常依靠于该 "设备标识符" 识别设备
+	 */
 	unsigned short	device;
-    /**
-     *  有时候，相同厂商使用 子码 来进一步区分相似的设备
-     */
+	/**
+	 *  有时候，相同厂商使用 子码 来进一步区分相似的设备
+	 */
 	unsigned short	subsystem_vendor;
 	unsigned short	subsystem_device;
-    /**
-     *  每个外部设备属于某个类
-     */
+	/**
+	 *  每个外部设备属于某个类
+	 */
 	unsigned int	class;		/* 3 bytes: (base,sub,prog-if) */
 
-    /**
-     *  修订 版本 ID，
-     *  见 `PCI_REVISION_ID`
-     */
+	/**
+	 *  修订 版本 ID，
+	 *  见 `PCI_REVISION_ID`
+	 */
 	u8		revision;	/* PCI revision, low byte of class word */
 	u8		hdr_type;	/* PCI header type (`multi' flag masked out) */
 #ifdef CONFIG_PCIEAER
@@ -465,15 +465,15 @@ struct pci_dev {
 	 */
 	unsigned int	irq;
 
-    /**
-     * PCI 设备的IO区域已经被集成到通用资源管理
-     * pci_resource_start() -
-     * pci_resource_end() -
-     * pci_resource_flags() -
-     *  资源标志用来定义单个资源的某些特性
-     *  IORESOURCE_IO
-     *  IORESOURCE_MEM
-     */
+	/**
+	 * PCI 设备的IO区域已经被集成到通用资源管理
+	 * pci_resource_start() -
+	 * pci_resource_end() -
+	 * pci_resource_flags() -
+	 *  资源标志用来定义单个资源的某些特性
+	 *  IORESOURCE_IO
+	 *  IORESOURCE_MEM
+	 */
 	struct resource resource[DEVICE_COUNT_RESOURCE]; /* I/O and memory regions + expansion ROMs */
 
 	bool		match_driver;		/* Skip attaching driver */
@@ -505,6 +505,7 @@ struct pci_dev {
 	unsigned int	is_hotplug_bridge:1;
 	unsigned int	shpc_managed:1;		/* SHPC owned by shpchp */
 	unsigned int	is_thunderbolt:1;	/* Thunderbolt controller */
+	unsigned int    is_cxl:1;               /* Compute Express Link (CXL) */
 	/*
 	 * Devices marked being untrusted are the ones that can potentially
 	 * execute DMA attacks and similar. They are typically connected
@@ -623,8 +624,12 @@ struct pci_host_bridge {
 	unsigned int	native_pme:1;		/* OS may use PCIe PME */
 	unsigned int	native_ltr:1;		/* OS may use PCIe LTR */
 	unsigned int	native_dpc:1;		/* OS may use PCIe DPC */
+	unsigned int    native_cxl_error:1;     /* OS may use CXL RAS/Events */
 	unsigned int	preserve_config:1;	/* Preserve FW resource setup */
 	unsigned int	size_windows:1;		/* Enable root bus sizing */
+	unsigned int    msi_domain:1;           /* Bridge wants MSI domain */
+	unsigned int    broken_l1ss_resume:1;   /* Resuming from L1SS during
+						system suspend is broken */
 
 	/* Resource alignment requirements */
 	resource_size_t (*align_resource)(struct pci_dev *dev,
@@ -750,6 +755,53 @@ static inline bool pci_is_bridge(struct pci_dev *dev)
 	return dev->hdr_type == PCI_HEADER_TYPE_BRIDGE ||
 		dev->hdr_type == PCI_HEADER_TYPE_CARDBUS;
 }
+
+#ifdef __linux_7_3__ // v7.3-rc1-99-g89a312991dc6
+/**
+ * pci_is_vga - check if the PCI device is a VGA device
+ * @pdev: PCI device
+ *
+ * The PCI Code and ID Assignment spec, r1.15, secs 1.4 and 1.1, define
+ * VGA Base Class and Sub-Classes:
+ *
+ *   03 00  PCI_CLASS_DISPLAY_VGA      VGA-compatible or 8514-compatible
+ *   00 01  PCI_CLASS_NOT_DEFINED_VGA  VGA-compatible (before Class Code)
+ *
+ * Return true if the PCI device is a VGA device and uses the legacy VGA
+ * resources ([mem 0xa0000-0xbffff], [io 0x3b0-0x3bb], [io 0x3c0-0x3df] and
+ * aliases).
+ */
+static inline bool pci_is_vga(struct pci_dev *pdev)
+{
+        if ((pdev->class >> 8) == PCI_CLASS_DISPLAY_VGA)
+                return true;
+
+        if ((pdev->class >> 8) == PCI_CLASS_NOT_DEFINED_VGA)
+                return true;
+
+        return false;
+}
+
+/**
+ * pci_is_display - check if the PCI device is a display controller
+ * @pdev: PCI device
+ *
+ * Determine whether the given PCI device corresponds to a display
+ * controller. Display controllers are typically used for graphical output
+ * and are identified based on their class code.
+ *
+ * Return: true if the PCI device is a display controller, false otherwise.
+ */
+static inline bool pci_is_display(struct pci_dev *pdev)
+{
+        return (pdev->class >> 16) == PCI_BASE_CLASS_DISPLAY;
+}
+
+static inline bool pcie_is_cxl(struct pci_dev *pci_dev)
+{
+        return pci_dev->is_cxl;
+}
+#endif
 
 #define for_each_pci_bridge(dev, bus)				\
 	list_for_each_entry(dev, &bus->devices, bus_list)	\
@@ -949,35 +1001,35 @@ struct module;
  */
 struct pci_driver {
 	struct list_head	node;
-    /**
-     *  驱动程序名字
-     */
+	/**
+	 *  驱动程序名字
+	 */
 	const char		*name;
 
-    /**
-     *
-     */
+	/**
+	 *
+	 */
 	const struct pci_device_id *id_table;	/* Must be non-NULL for probe to be called */
 
-    /**
-     *  探测函数的指针
-     */
+	/**
+	 *  探测函数的指针
+	 */
 	int  (*probe)(struct pci_dev *dev, const struct pci_device_id *id);	/* New device inserted */
-    /**
-     *  移除函数
-     */
+	/**
+	 *  移除函数
+	 */
 	void (*remove)(struct pci_dev *dev);	/* Device removed (NULL if not a hot-plug capable driver) */
-    /**
-     *  挂起函数
-     */
+	/**
+	 *  挂起函数
+	 */
 	int  (*suspend)(struct pci_dev *dev, pm_message_t state);	/* Device suspended */
-    /**
-     *  恢复函数
-     */
+	/**
+	 *  恢复函数
+	 */
 	int  (*resume)(struct pci_dev *dev);	/* Device woken up */
-    /**
-     *
-     */
+	/**
+	 *
+	 */
 	void (*shutdown)(struct pci_dev *dev);
 	int  (*sriov_configure)(struct pci_dev *dev, int num_vfs); /* On PF */
 	const struct pci_error_handlers *err_handler;
