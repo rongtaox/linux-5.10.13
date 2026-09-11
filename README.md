@@ -6,6 +6,12 @@ Linux内核完全注释
 1. 此代码不可编译
 2. 将不定期从linux上游合入/添加代码
 
+# Test-Linux
+
+所有测试都将发生在test-linux中
+
+- https://github.com/Rtoax/test-linux
+
 
 # 原 README
 
