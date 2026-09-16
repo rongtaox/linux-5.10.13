@@ -9514,7 +9514,9 @@ static int dev_new_index(struct net *net)
 	}
 }
 
-/* Delayed registration/unregisteration */
+/**
+ * Delayed registration/unregisteration 延迟注册/注销
+ */
 static LIST_HEAD(net_todo_list);
 DECLARE_WAIT_QUEUE_HEAD(netdev_unregistering_wq);
 
@@ -10286,6 +10288,12 @@ EXPORT_SYMBOL(netdev_refcnt_read);
  * reference if they receive an UNREGISTER event.
  * We can get stuck here if buggy protocols don't correctly
  * call dev_put.
+ *
+ * 该函数在注销网络设备时被调用。
+ *
+ * 任何持有设备引用的协议或设备都应注册网络设备通知；一旦收到 UNREGISTER（注销）事件，
+ * 便需进行清理并释放该引用。如果存在缺陷的协议未能正确调用 `dev_put`，程序可能会在此处
+ * 陷入停滞。
  */
 static void netdev_wait_allrefs(struct net_device *dev)
 {
@@ -10335,6 +10343,10 @@ static void netdev_wait_allrefs(struct net_device *dev)
 		refcnt = netdev_refcnt_read(dev);
 
 		if (refcnt && time_after(jiffies, warning_time + 10 * HZ)) {
+			/**
+			 * 示例输出：
+			 * waiting for lo to become free. Usage count = 8
+			 */
 			pr_emerg("unregister_netdevice: waiting for %s to become free. Usage count = %d\n",
 				 dev->name, refcnt);
 			warning_time = jiffies;
